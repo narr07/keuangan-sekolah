@@ -16,20 +16,71 @@ class ExportService {
     return 'Rp ${_currencyFormat.format(amount.toInt())}';
   }
 
-  static Future<bool> _requestStoragePermission() async {
+  /// Get a writable directory for saving exported files.
+  /// Uses a safe fallback strategy that works on all Android versions.
+  static Future<Directory> _getSaveDirectory() async {
     if (Platform.isAndroid) {
-      if (await Permission.manageExternalStorage.isGranted) return true;
-      if (await Permission.storage.isGranted) return true;
+      // Strategy 1: Try getDownloadsDirectory() first (available on some devices)
+      try {
+        final downloadsDir = await getDownloadsDirectory();
+        if (downloadsDir != null && await downloadsDir.exists()) {
+          return downloadsDir;
+        }
+      } catch (_) {}
 
-      // Request both to be safe depending on Android version
-      await Permission.storage.request();
-      if (await Permission.manageExternalStorage.request().isGranted)
-        return true;
-      if (await Permission.storage.request().isGranted) return true;
+      // Strategy 2: Try accessing /storage/emulated/0/Download with permission
+      try {
+        final hasPermission = await _requestStoragePermission();
+        if (hasPermission) {
+          final downloadDir = Directory('/storage/emulated/0/Download');
+          if (await downloadDir.exists()) {
+            // Test if we can actually write
+            final testFile = File(
+              '${downloadDir.path}/.test_write_${DateTime.now().millisecondsSinceEpoch}',
+            );
+            try {
+              await testFile.writeAsString('test');
+              await testFile.delete();
+              return downloadDir;
+            } catch (_) {
+              // Can't write, fall through to next strategy
+            }
+          }
+        }
+      } catch (_) {}
 
-      return false; // Not granted
+      // Strategy 3: Use getExternalStorageDirectory() - always works, app-specific
+      try {
+        final extDir = await getExternalStorageDirectory();
+        if (extDir != null) {
+          return extDir;
+        }
+      } catch (_) {}
+
+      // Strategy 4: Final fallback to app documents directory
+      return await getApplicationDocumentsDirectory();
+    } else {
+      // iOS
+      return await getApplicationDocumentsDirectory();
     }
-    return true; // iOS or Web doesn't need this specific permission handler logic for default apps directory
+  }
+
+  static Future<bool> _requestStoragePermission() async {
+    if (!Platform.isAndroid) return true;
+
+    // Check if already granted
+    if (await Permission.manageExternalStorage.isGranted) return true;
+    if (await Permission.storage.isGranted) return true;
+
+    // Request manage external storage (for Android 11+)
+    final manageResult = await Permission.manageExternalStorage.request();
+    if (manageResult.isGranted) return true;
+
+    // Request regular storage (for Android 9 and below)
+    final storageResult = await Permission.storage.request();
+    if (storageResult.isGranted) return true;
+
+    return false;
   }
 
   // ============== EXCEL EXPORT ==============
@@ -175,28 +226,12 @@ class ExportService {
     final fileBytes = excel.save();
     if (fileBytes != null) {
       if (kIsWeb) {
-        // Fallback for Web if needed, but since requirement is mobile focus,
-        // you might still use your old file_saver logic if you need web support.
+        // Fallback for Web if needed
       } else {
-        bool hasPermission = await _requestStoragePermission();
-        if (!hasPermission && Platform.isAndroid) {
-          throw Exception(
-            "Izin penyimpanan ditolak (Storage permission denied)",
-          );
-        }
-
-        Directory? dir;
-        if (Platform.isAndroid) {
-          dir = Directory('/storage/emulated/0/Download');
-          if (!await dir.exists()) {
-            dir = await getExternalStorageDirectory();
-          }
-        } else {
-          dir = await getApplicationDocumentsDirectory();
-        }
+        final dir = await _getSaveDirectory();
 
         final filePath =
-            '${dir!.path}/Laporan_Keuangan_Excel_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+            '${dir.path}/Laporan_Keuangan_Excel_${DateTime.now().millisecondsSinceEpoch}.xlsx';
         final file = File(filePath);
         await file.writeAsBytes(fileBytes);
 
@@ -328,23 +363,10 @@ class ExportService {
     if (kIsWeb) {
       // Fallback for web if needed
     } else {
-      bool hasPermission = await _requestStoragePermission();
-      if (!hasPermission && Platform.isAndroid) {
-        throw Exception("Izin penyimpanan ditolak (Storage permission denied)");
-      }
-
-      Directory? dir;
-      if (Platform.isAndroid) {
-        dir = Directory('/storage/emulated/0/Download');
-        if (!await dir.exists()) {
-          dir = await getExternalStorageDirectory();
-        }
-      } else {
-        dir = await getApplicationDocumentsDirectory();
-      }
+      final dir = await _getSaveDirectory();
 
       final filePath =
-          '${dir!.path}/Laporan_Keuangan_PDF_${DateTime.now().millisecondsSinceEpoch}.pdf';
+          '${dir.path}/Laporan_Keuangan_PDF_${DateTime.now().millisecondsSinceEpoch}.pdf';
       final file = File(filePath);
       await file.writeAsBytes(bytes);
 
