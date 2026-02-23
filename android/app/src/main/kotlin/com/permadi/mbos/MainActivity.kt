@@ -1,4 +1,4 @@
-package com.example.bks
+package com.permadi.mbos
 
 import io.flutter.embedding.android.FlutterActivity
 

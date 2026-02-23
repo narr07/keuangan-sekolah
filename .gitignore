@@ -51,3 +51,8 @@ ios/.symlinks/
 windows/flutter/ephemeral/
 linux/flutter/ephemeral/
 macos/Flutter/ephemeral/
+
+# Signing keys (JANGAN commit ke repository!)
+**/android/key.properties
+*.jks
+*.keystore

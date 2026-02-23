@@ -4,7 +4,8 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import '../theme/app_colors.dart';
 import '../database/database_helper.dart';
 import '../models/transaction_model.dart';
-import 'package:pattern_formatter/pattern_formatter.dart';
+import '../widgets/currency_input_sheet.dart';
+import '../widgets/indonesian_currency_formatter.dart';
 
 class PengeluaranScreen extends StatefulWidget {
   const PengeluaranScreen({super.key});
@@ -374,65 +375,70 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    TextFormField(
-                      controller: amountController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: false,
-                        signed: false,
-                      ),
-                      inputFormatters: [ThousandsFormatter()],
-                      decoration: InputDecoration(
-                        prefixText: 'Rp ',
-                        hintText: '0',
-                        filled: true,
-                        fillColor: Colors.grey.shade50,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: Colors.grey.shade200),
+                    GestureDetector(
+                      onTap: () async {
+                        final result = await showCurrencyInput(
+                          ctx,
+                          initialValue: amountController.text,
+                          title: 'Jumlah Pengeluaran',
+                          accentColor: _getCategoryColor(category),
+                        );
+                        if (result != null) {
+                          setModalState(() {
+                            amountController.text = result;
+                          });
+                        }
+                      },
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
                         ),
-                        enabledBorder: OutlineInputBorder(
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: Colors.grey.shade200),
+                          border: Border.all(color: Colors.grey.shade200),
                         ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(
-                            color: AppColors.primary,
-                            width: 2,
-                          ),
-                        ),
-                        suffixIcon: InkWell(
-                          onTap: () {
-                            final text = amountController.text.replaceAll(
-                              '.',
-                              '',
-                            );
-                            if (text.isNotEmpty) {
-                              amountController.text = text + '000';
-                            } else {
-                              amountController.text = '000';
-                            }
-                          },
-                          child: Container(
-                            margin: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: AppColors.primary.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
+                        child: Row(
+                          children: [
+                            Text(
+                              'Rp ',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Colors.grey.shade600,
                               ),
+                            ),
+                            Expanded(
                               child: Text(
-                                '000',
+                                amountController.text.isEmpty
+                                    ? '0'
+                                    : amountController.text,
                                 style: TextStyle(
-                                  color: AppColors.primary,
-                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: amountController.text.isEmpty
+                                      ? Colors.grey.shade400
+                                      : AppColors.textDark,
                                 ),
                               ),
                             ),
-                          ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(
+                                Icons.dialpad,
+                                color: AppColors.primary,
+                                size: 20,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -534,11 +540,9 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
                       height: 52,
                       child: ElevatedButton.icon(
                         onPressed: () async {
-                          final amountText = amountController.text.replaceAll(
-                            '.',
-                            '',
+                          final amount = IndonesianCurrencyFormatter.parse(
+                            amountController.text,
                           );
-                          final amount = double.tryParse(amountText) ?? 0;
                           if (amount <= 0 ||
                               titleController.text.trim().isEmpty) {
                             ScaffoldMessenger.of(ctx).showSnackBar(

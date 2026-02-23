@@ -54,7 +54,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   double _parseAmount(String text) {
-    return double.tryParse(text.replaceAll('.', '').replaceAll(',', '')) ?? 0;
+    // Handle Indonesian format: dots as thousands, comma as decimal
+    // Remove dots (thousands separator), replace comma with dot for parsing
+    String cleaned = text.replaceAll('.', '').replaceAll(',', '.');
+    return double.tryParse(cleaned) ?? 0;
   }
 
   Future<void> _saveSettings() async {
