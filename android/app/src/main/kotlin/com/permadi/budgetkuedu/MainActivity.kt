@@ -1,4 +1,4 @@
-package com.permadi.mbos
+package com.permadi.budgetkuedu
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -158,7 +158,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: const [
                                 Text(
-                                  'M-BOS',
+                                  'BudgetKu Edu',
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 18,
@@ -167,7 +167,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                                 SizedBox(height: 4),
                                 Text(
-                                  'Aplikasi Manajemen Keuangan Dana BOS\nVersi 1.0.0',
+                                  'Aplikasi Manajemen Keuangan\nVersi 1.0.0',
                                   style: TextStyle(
                                     fontSize: 13,
                                     color: Colors.black54,
