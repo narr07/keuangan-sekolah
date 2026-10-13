@@ -19,6 +19,7 @@ class PemasukanScreenState extends State<PemasukanScreen> {
   final _currencyFormat = NumberFormat('#,##0', 'id_ID');
 
   double _totalIncome = 0;
+  int _year = DateTime.now().year;
   List<TransactionModel> _incomes = [];
   bool _isLoading = true;
   String _selectedFilter = 'Semua';
@@ -41,16 +42,24 @@ class PemasukanScreenState extends State<PemasukanScreen> {
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    _totalIncome = await _dbHelper.getTotalIncome();
-    final allTx = await _dbHelper.getAllTransactions();
-    _incomes = allTx.where((t) => t.type == 'income').toList();
-    setState(() => _isLoading = false);
+    final year = (await _dbHelper.getSettings()).activeYear;
+    final incomes = await _dbHelper.getTransactions(
+      year: year,
+      type: TxType.income,
+    );
+    if (!mounted) return;
+    setState(() {
+      _year = year;
+      _incomes = incomes;
+      _totalIncome = incomes.fold(0, (sum, t) => sum + t.amount);
+      _isLoading = false;
+    });
   }
 
   List<TransactionModel> get _filteredIncomes {
     if (_selectedFilter == 'Semua') return _incomes;
     if (_selectedFilter == 'Dana BOS') {
-      return _incomes.where((t) => t.category == 'BOS Fund').toList();
+      return _incomes.where((t) => t.category == kBosCategory).toList();
     }
     if (_selectedFilter == 'Pinjaman') {
       return _incomes.where((t) => t.category == 'Pinjaman').toList();
@@ -61,7 +70,7 @@ class PemasukanScreenState extends State<PemasukanScreen> {
     return _incomes
         .where(
           (t) =>
-              t.category != 'BOS Fund' &&
+              t.category != kBosCategory &&
               t.category != 'Pinjaman' &&
               t.category != 'Sumbangan',
         )
@@ -74,7 +83,7 @@ class PemasukanScreenState extends State<PemasukanScreen> {
 
   IconData _getIcon(String category) {
     switch (category) {
-      case 'BOS Fund':
+      case kBosCategory:
         return Icons.account_balance;
       case 'Pinjaman':
         return Icons.description;
@@ -87,7 +96,7 @@ class PemasukanScreenState extends State<PemasukanScreen> {
 
   Color _getIconColor(String category) {
     switch (category) {
-      case 'BOS Fund':
+      case kBosCategory:
         return AppColors.primary;
       case 'Pinjaman':
         return Colors.amber.shade600;
@@ -100,7 +109,7 @@ class PemasukanScreenState extends State<PemasukanScreen> {
 
   Color _getIconBg(String category) {
     switch (category) {
-      case 'BOS Fund':
+      case kBosCategory:
         return AppColors.primary.withValues(alpha: 0.15);
       case 'Pinjaman':
         return Colors.amber.shade50;
@@ -293,6 +302,22 @@ class PemasukanScreenState extends State<PemasukanScreen> {
     );
   }
 
+  /// Tanggal awal form: hari ini, atau akhir tahun bila melihat tahun lampau.
+  DateTime _defaultDate() {
+    final now = DateTime.now();
+    return _year >= now.year ? now : DateTime(_year, 12, 31);
+  }
+
+  void _showLinkedInfo() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Pemasukan ini berasal dari pencairan BOS. Ubah atau hapus dari halaman BOS.',
+        ),
+      ),
+    );
+  }
+
   Future<void> _showInputForm(
     String category,
     TransactionModel? existing,
@@ -304,7 +329,7 @@ class PemasukanScreenState extends State<PemasukanScreen> {
     final descController = TextEditingController(
       text: existing?.description ?? '',
     );
-    DateTime selectedDate = existing?.date ?? DateTime.now();
+    DateTime selectedDate = existing?.date ?? _defaultDate();
     final isEdit = existing != null;
 
     final result = await showModalBottomSheet<bool>(
@@ -588,30 +613,21 @@ class PemasukanScreenState extends State<PemasukanScreen> {
                             return;
                           }
 
+                          final transaction = TransactionModel(
+                            id: existing?.id,
+                            title: titleController.text.trim(),
+                            category: category,
+                            amount: amount,
+                            type: TxType.income,
+                            date: selectedDate,
+                            description: descController.text.trim().isEmpty
+                                ? null
+                                : descController.text.trim(),
+                            icon: _getIconName(category),
+                          );
                           if (isEdit) {
-                            final updated = existing.copyWith(
-                              title: titleController.text.trim(),
-                              category: category,
-                              amount: amount,
-                              date: selectedDate,
-                              description: descController.text.trim().isEmpty
-                                  ? null
-                                  : descController.text.trim(),
-                              icon: _getIconName(category),
-                            );
-                            await _dbHelper.updateTransaction(updated);
+                            await _dbHelper.updateTransaction(transaction);
                           } else {
-                            final transaction = TransactionModel(
-                              title: titleController.text.trim(),
-                              category: category,
-                              amount: amount,
-                              type: 'income',
-                              date: selectedDate,
-                              description: descController.text.trim().isEmpty
-                                  ? null
-                                  : descController.text.trim(),
-                              icon: _getIconName(category),
-                            );
                             await _dbHelper.insertTransaction(transaction);
                           }
                           if (ctx.mounted) Navigator.pop(ctx, true);
@@ -716,9 +732,9 @@ class PemasukanScreenState extends State<PemasukanScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Total Pemasukan Bulan Ini',
-              style: TextStyle(
+            Text(
+              'Total Pemasukan Tahun $_year',
+              style: const TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
                 color: Colors.black54,
@@ -774,7 +790,7 @@ class PemasukanScreenState extends State<PemasukanScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
         itemCount: _filters.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
           final filter = _filters[index];
           final isSelected = _selectedFilter == filter;
@@ -856,7 +872,9 @@ class PemasukanScreenState extends State<PemasukanScreen> {
                     extentRatio: 0.5,
                     children: [
                       SlidableAction(
-                        onPressed: (_) => _showInputForm(tx.category, tx),
+                        onPressed: (_) => tx.isLinkedToDisbursement
+                            ? _showLinkedInfo()
+                            : _showInputForm(tx.category, tx),
                         backgroundColor: Colors.blue,
                         foregroundColor: Colors.white,
                         icon: Icons.edit,
@@ -865,12 +883,16 @@ class PemasukanScreenState extends State<PemasukanScreen> {
                       ),
                       SlidableAction(
                         onPressed: (_) async {
+                          if (tx.isLinkedToDisbursement) {
+                            _showLinkedInfo();
+                            return;
+                          }
                           final confirm = await showDialog<bool>(
                             context: context,
                             builder: (ctx) => AlertDialog(
                               title: const Text('Hapus Pemasukan'),
                               content: const Text(
-                                'Yakin ingin menghapus pemasukan ini? Saldo akan dikurangi.',
+                                'Yakin ingin menghapus pemasukan ini?',
                               ),
                               actions: [
                                 TextButton(
@@ -888,20 +910,6 @@ class PemasukanScreenState extends State<PemasukanScreen> {
                             ),
                           );
                           if (confirm == true && tx.id != null) {
-                            // Recover balance when deleting income
-                            final amount = tx.amount;
-                            final isBos = tx.category == 'BOS Fund';
-                            final fundName = isBos ? 'BOS Fund' : 'Other Fund';
-                            final funds = await _dbHelper.getAllFunds();
-                            for (final fund in funds) {
-                              if (fund.name == fundName) {
-                                await _dbHelper.updateFundBalance(
-                                  fund.name,
-                                  fund.balance - amount,
-                                );
-                                break;
-                              }
-                            }
                             await _dbHelper.deleteTransaction(tx.id!);
                             _loadData();
                           }

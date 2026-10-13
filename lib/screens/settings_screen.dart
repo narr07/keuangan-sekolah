@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../theme/app_colors.dart';
 import '../database/database_helper.dart';
 import '../models/settings_model.dart';
+import '../services/backup_service.dart';
 import '../services/export_service.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -50,7 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       settings.paguSemester2.toInt(),
     );
     _tahunAnggaranController.text = settings.tahunAnggaran;
-    setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = false);
   }
 
   double _parseAmount(String text) {
@@ -73,6 +74,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     await _dbHelper.updateSettings(settings);
+    if (!mounted) return;
 
     setState(() => _isSaving = false);
 
@@ -207,12 +209,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _buildInputField(
                       label: 'Tahun Anggaran',
                       controller: _tahunAnggaranController,
-                      hint: 'Contoh: 2024',
+                      hint: 'Contoh: ${DateTime.now().year}',
                       icon: Icons.calendar_today,
                       keyboardType: TextInputType.number,
-                      validator: (v) => v == null || v.trim().isEmpty
-                          ? 'Tahun anggaran wajib diisi'
-                          : null,
+                      validator: (v) =>
+                          RegExp(r'^\d{4}$').hasMatch(v?.trim() ?? '')
+                          ? null
+                          : 'Isi tahun 4 digit, misalnya ${DateTime.now().year}',
                     ),
 
                     const SizedBox(height: 32),
@@ -363,7 +366,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                     const SizedBox(height: 16),
                     const Text(
-                      'Unduh seluruh laporan keuangan dalam bentuk PDF atau Excel.',
+                      'Unduh laporan keuangan tahun anggaran aktif dalam bentuk PDF atau Excel.',
                       style: TextStyle(fontSize: 13, color: Colors.black54),
                     ),
                     const SizedBox(height: 16),
@@ -408,6 +411,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 32),
+
+                    // Backup Section
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    _buildSectionHeader('Backup & Pulihkan', Icons.backup),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Data hanya tersimpan di HP ini. Simpan backup secara '
+                      'berkala (misalnya ke Google Drive) agar data tidak hilang '
+                      'saat aplikasi dihapus atau ganti HP.',
+                      style: TextStyle(fontSize: 13, color: Colors.black54),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _handleBackup,
+                            icon: const Icon(Icons.upload_file),
+                            label: const Text('Buat Backup'),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _handleRestore,
+                            icon: const Icon(Icons.restore),
+                            label: const Text('Pulihkan'),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              foregroundColor: Colors.orange.shade800,
+                              side: BorderSide(color: Colors.orange.shade800),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -416,44 +466,89 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _handleExport(String type) async {
+  void _showMessage(String text, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: isError ? Colors.red : null,
+      ),
+    );
+  }
+
+  Future<void> _handleBackup() async {
     try {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => const Center(child: CircularProgressIndicator()),
-      );
-
-      final transactions = await _dbHelper.getAllTransactions();
-      final settings = await _dbHelper.getSettings();
-
-      if (mounted) Navigator.pop(context); // Close loading dialog
-
-      if (type == 'pdf') {
-        await ExportService.exportToPdf(transactions, settings.schoolName);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Berhasil diekspor ke PDF!')),
-          );
-        }
-      } else {
-        await ExportService.exportToExcel(transactions, settings.schoolName);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Berhasil diekspor ke Excel!')),
-          );
-        }
+      if (await BackupService.exportBackup()) {
+        _showMessage('Backup berhasil disimpan.');
       }
     } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // Force close dialog if error occurred
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Gagal mengekspor data: $e'),
-            backgroundColor: Colors.red,
+      _showMessage('Gagal membuat backup: $e', isError: true);
+    }
+  }
+
+  Future<void> _handleRestore() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Pulihkan dari Backup?'),
+        content: const Text(
+          'Semua data di HP ini akan DIGANTI dengan isi file backup. '
+          'Tindakan ini tidak bisa dibatalkan.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Batal'),
           ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Ganti Data',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    try {
+      if (!await BackupService.importBackup()) return;
+      _showMessage('Data berhasil dipulihkan.');
+      // Kembali ke Beranda agar semua halaman memuat ulang data baru.
+      if (mounted) Navigator.pop(context, true);
+    } on FormatException catch (e) {
+      _showMessage(e.message, isError: true);
+    } catch (e) {
+      _showMessage('Gagal memulihkan data: $e', isError: true);
+    }
+  }
+
+  Future<void> _handleExport(String type) async {
+    try {
+      final settings = await _dbHelper.getSettings();
+      final year = settings.activeYear;
+      final transactions = await _dbHelper.getTransactions(year: year);
+      final summary = await _dbHelper.getYearSummary(year);
+
+      final saved = type == 'pdf'
+          ? await ExportService.exportToPdf(
+              transactions,
+              settings.schoolName,
+              summary,
+            )
+          : await ExportService.exportToExcel(
+              transactions,
+              settings.schoolName,
+              summary,
+            );
+      if (saved) {
+        _showMessage(
+          'Laporan $year berhasil diekspor ke ${type == 'pdf' ? 'PDF' : 'Excel'}!',
         );
       }
+    } catch (e) {
+      _showMessage('Gagal mengekspor data: $e', isError: true);
     }
   }
 

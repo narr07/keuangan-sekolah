@@ -4,6 +4,7 @@ import 'theme/app_colors.dart';
 import 'database/database_helper.dart';
 import 'models/transaction_model.dart';
 import 'models/settings_model.dart';
+import 'models/year_summary.dart';
 import 'screens/settings_screen.dart';
 import 'screens/report_screen.dart';
 
@@ -18,9 +19,8 @@ class HomeScreenState extends State<HomeScreen> {
   final _dbHelper = DatabaseHelper.instance;
   final _currencyFormat = NumberFormat('#,##0', 'id_ID');
 
-  double _totalIncome = 0;
-  double _totalExpense = 0;
-  double _saldo = 0;
+  YearSummary? _summary;
+  List<int> _years = [];
   List<TransactionModel> _transactions = [];
   SettingsModel? _settings;
   bool _isLoading = true;
@@ -36,17 +36,57 @@ class HomeScreenState extends State<HomeScreen> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
 
-    _totalIncome = await _dbHelper.getTotalIncome();
-    _totalExpense = await _dbHelper.getTotalExpense();
-    _saldo = _totalIncome - _totalExpense;
-    final transactions = await _dbHelper.getRecentTransactions(limit: 5);
     final settings = await _dbHelper.getSettings();
+    final year = settings.activeYear;
+    final summary = await _dbHelper.getYearSummary(year);
+    final years = await _dbHelper.getAvailableYears();
+    final transactions = await _dbHelper.getTransactions(year: year, limit: 5);
+    if (!mounted) return;
 
     setState(() {
-      _transactions = transactions;
       _settings = settings;
+      _summary = summary;
+      _years = years;
+      _transactions = transactions;
       _isLoading = false;
     });
+  }
+
+  Future<void> _pickYear() async {
+    final current = _settings?.activeYear;
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Text(
+                'Pilih Tahun Anggaran',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            for (final y in _years)
+              ListTile(
+                title: Text('Tahun $y'),
+                trailing: y == current
+                    ? const Icon(Icons.check, color: AppColors.primary)
+                    : null,
+                onTap: () => Navigator.pop(ctx, y),
+              ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (picked != null && picked != current) {
+      await _dbHelper.setActiveYear(picked);
+      _loadData();
+    }
   }
 
   String _formatCurrency(double amount) {
@@ -157,6 +197,28 @@ class HomeScreenState extends State<HomeScreen> {
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
+                    const SizedBox(height: 2),
+                    GestureDetector(
+                      onTap: _pickYear,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Tahun Anggaran ${_settings?.activeYear ?? ''}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          const Icon(
+                            Icons.arrow_drop_down,
+                            size: 18,
+                            color: AppColors.primary,
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -230,7 +292,7 @@ class HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            _formatCurrency(_saldo),
+            _formatCurrency(_summary?.closingBalance ?? 0),
             style: const TextStyle(
               color: Colors.white,
               fontSize: 32,
@@ -238,6 +300,16 @@ class HomeScreenState extends State<HomeScreen> {
               letterSpacing: -0.5,
             ),
           ),
+          if ((_summary?.openingBalance ?? 0) != 0) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Termasuk sisa tahun lalu ${_formatCurrency(_summary!.openingBalance)}',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.8),
+                fontSize: 12,
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
           Row(
             children: [
@@ -271,7 +343,7 @@ class HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             Text(
-                              _formatCurrency(_totalIncome),
+                              _formatCurrency(_summary?.income ?? 0),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 12,
@@ -317,7 +389,7 @@ class HomeScreenState extends State<HomeScreen> {
                               ),
                             ),
                             Text(
-                              _formatCurrency(_totalExpense),
+                              _formatCurrency(_summary?.expense ?? 0),
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 12,
@@ -344,9 +416,9 @@ class HomeScreenState extends State<HomeScreen> {
       children: [
         Expanded(
           child: _buildSummaryCard(
-            title: 'PEMASUKAN',
-            amount: _formatCurrency(_totalIncome),
-            icon: Icons.trending_up,
+            title: 'SALDO DANA BOS',
+            amount: _formatCurrency(_summary?.bosBalance ?? 0),
+            icon: Icons.account_balance,
             iconColor: AppColors.emerald600,
             bgColor: AppColors.mint,
             borderColor: Colors.green.shade100,
@@ -356,13 +428,13 @@ class HomeScreenState extends State<HomeScreen> {
         const SizedBox(width: 16),
         Expanded(
           child: _buildSummaryCard(
-            title: 'PENGELUARAN',
-            amount: _formatCurrency(_totalExpense),
-            icon: Icons.trending_down,
-            iconColor: AppColors.red500,
-            bgColor: Colors.red.shade50,
-            borderColor: Colors.red.shade100,
-            titleColor: Colors.red.shade800,
+            title: 'SALDO DANA LAINNYA',
+            amount: _formatCurrency(_summary?.otherBalance ?? 0),
+            icon: Icons.savings,
+            iconColor: AppColors.purple600,
+            bgColor: AppColors.pastelPurple,
+            borderColor: AppColors.purple600.withValues(alpha: 0.15),
+            titleColor: AppColors.purple600,
           ),
         ),
       ],

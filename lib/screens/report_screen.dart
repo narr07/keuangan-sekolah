@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import '../theme/app_colors.dart';
 import '../database/database_helper.dart';
 import '../models/transaction_model.dart';
+import '../models/year_summary.dart';
 
 class ReportScreen extends StatefulWidget {
   const ReportScreen({super.key});
@@ -19,6 +20,7 @@ class _ReportScreenState extends State<ReportScreen> {
   double _totalIncome = 0;
   double _totalExpense = 0;
   double _saldo = 0;
+  YearSummary? _summary;
   List<TransactionModel> _allTransactions = [];
   bool _isLoading = true;
 
@@ -35,10 +37,16 @@ class _ReportScreenState extends State<ReportScreen> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
 
-    _totalIncome = await _dbHelper.getTotalIncome();
-    _totalExpense = await _dbHelper.getTotalExpense();
-    _saldo = _totalIncome - _totalExpense;
-    _allTransactions = await _dbHelper.getAllTransactions();
+    final year = (await _dbHelper.getSettings()).activeYear;
+    final summary = await _dbHelper.getYearSummary(year);
+    final transactions = await _dbHelper.getTransactions(year: year);
+    if (!mounted) return;
+
+    _summary = summary;
+    _totalIncome = summary.income;
+    _totalExpense = summary.expense;
+    _saldo = summary.closingBalance;
+    _allTransactions = transactions;
 
     // Build category breakdowns
     _incomeByCategory = {};
@@ -47,8 +55,8 @@ class _ReportScreenState extends State<ReportScreen> {
       String categoryName = tx.category;
 
       // Relabel or group old categories to match current UI
-      if (tx.type == 'income') {
-        if (categoryName == 'BOS Fund') categoryName = 'Dana BOS';
+      if (tx.isIncome) {
+        if (categoryName == kBosCategory) categoryName = 'Dana BOS';
         if (categoryName == 'SPP') categoryName = 'Lainnya'; // SPP removed
 
         _incomeByCategory[categoryName] =
@@ -150,7 +158,7 @@ class _ReportScreenState extends State<ReportScreen> {
       child: Column(
         children: [
           Text(
-            'Saldo Saat Ini',
+            'Saldo Akhir Tahun ${_summary?.year ?? ''}',
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.8),
               fontSize: 14,
@@ -173,6 +181,19 @@ class _ReportScreenState extends State<ReportScreen> {
               fontSize: 12,
             ),
           ),
+          if (_summary != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Saldo awal ${_formatCurrency(_summary!.openingBalance)}\n'
+              'Dana BOS ${_formatCurrency(_summary!.bosBalance)} • '
+              'Dana Lainnya ${_formatCurrency(_summary!.otherBalance)}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.85),
+                fontSize: 12,
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -50,4 +50,7 @@ class SettingsModel {
   }
 
   double get totalPagu => paguSemester1 + paguSemester2;
+
+  /// Tahun anggaran sebagai angka; jatuh ke tahun berjalan bila tidak valid.
+  int get activeYear => int.tryParse(tahunAnggaran) ?? DateTime.now().year;
 }
