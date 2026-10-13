@@ -38,13 +38,22 @@ class BosScreenState extends State<BosScreen> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
 
-    _settings = await _dbHelper.getSettings();
-    _disbursements = await _dbHelper.getAllBosDisbursements();
-    _totalCairSemester1 = await _dbHelper.getTotalBosCairBySemester(1);
-    _totalCairSemester2 = await _dbHelper.getTotalBosCairBySemester(2);
-    _totalCairAll = await _dbHelper.getTotalBosCair();
+    final settings = await _dbHelper.getSettings();
+    final year = settings.activeYear;
+    final disbursements = await _dbHelper.getBosDisbursementsByYear(year);
+    final cairS1 = await _dbHelper.getTotalBosCair(year, semester: 1);
+    final cairS2 = await _dbHelper.getTotalBosCair(year, semester: 2);
+    final cairAll = await _dbHelper.getTotalBosCair(year);
+    if (!mounted) return;
 
-    setState(() => _isLoading = false);
+    setState(() {
+      _settings = settings;
+      _disbursements = disbursements;
+      _totalCairSemester1 = cairS1;
+      _totalCairSemester2 = cairS2;
+      _totalCairAll = cairAll;
+      _isLoading = false;
+    });
   }
 
   String _formatCurrency(double amount) {
@@ -76,10 +85,12 @@ class BosScreenState extends State<BosScreen> {
     final descController = TextEditingController(
       text: existing?.description ?? '',
     );
-    DateTime selectedDate = existing?.date ?? DateTime.now();
+    final now = DateTime.now();
+    final year = _settings?.activeYear ?? now.year;
+    DateTime selectedDate =
+        existing?.date ?? (year >= now.year ? now : DateTime(year, 12, 31));
     String selectedStatus = existing?.status ?? 'Cair';
-    int selectedSemester =
-        existing?.semester ?? (DateTime.now().month <= 6 ? 1 : 2);
+    int selectedSemester = existing?.semester ?? (selectedDate.month <= 6 ? 1 : 2);
 
     final result = await showModalBottomSheet<bool>(
       context: context,
@@ -543,7 +554,7 @@ class BosScreenState extends State<BosScreen> {
                               ),
                             ),
                             Text(
-                              'Tahun Anggaran ${_settings?.tahunAnggaran ?? "2024"}',
+                              'Tahun Anggaran ${_settings?.activeYear ?? ''}',
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: Colors.black54,

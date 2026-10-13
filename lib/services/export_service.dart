@@ -1,264 +1,132 @@
+import 'package:excel/excel.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:excel/excel.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:open_filex/open_filex.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'dart:io';
 import '../models/transaction_model.dart';
+import '../models/year_summary.dart';
+import 'file_export.dart';
 
 class ExportService {
   static final _currencyFormat = NumberFormat('#,##0', 'id_ID');
+  static final _dateFormat = DateFormat('dd MMM yyyy');
 
   static String _formatCurrency(double amount) {
     return 'Rp ${_currencyFormat.format(amount.toInt())}';
   }
 
-  /// Get a writable directory for saving exported files.
-  /// Uses a safe fallback strategy that works on all Android versions.
-  static Future<Directory> _getSaveDirectory() async {
-    if (Platform.isAndroid) {
-      // Strategy 1: Try getDownloadsDirectory() first (available on some devices)
-      try {
-        final downloadsDir = await getDownloadsDirectory();
-        if (downloadsDir != null && await downloadsDir.exists()) {
-          return downloadsDir;
-        }
-      } catch (_) {}
+  static String _categoryLabel(TransactionModel tx) =>
+      tx.category == kBosCategory ? 'Dana BOS' : tx.category;
 
-      // Strategy 2: Try accessing /storage/emulated/0/Download with permission
-      try {
-        final hasPermission = await _requestStoragePermission();
-        if (hasPermission) {
-          final downloadDir = Directory('/storage/emulated/0/Download');
-          if (await downloadDir.exists()) {
-            // Test if we can actually write
-            final testFile = File(
-              '${downloadDir.path}/.test_write_${DateTime.now().millisecondsSinceEpoch}',
-            );
-            try {
-              await testFile.writeAsString('test');
-              await testFile.delete();
-              return downloadDir;
-            } catch (_) {
-              // Can't write, fall through to next strategy
-            }
-          }
-        }
-      } catch (_) {}
-
-      // Strategy 3: Use getExternalStorageDirectory() - always works, app-specific
-      try {
-        final extDir = await getExternalStorageDirectory();
-        if (extDir != null) {
-          return extDir;
-        }
-      } catch (_) {}
-
-      // Strategy 4: Final fallback to app documents directory
-      return await getApplicationDocumentsDirectory();
-    } else {
-      // iOS
-      return await getApplicationDocumentsDirectory();
-    }
+  static String _fileName(String kind, int year, String ext) {
+    final stamp = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
+    return 'Laporan_Keuangan_${year}_${kind}_$stamp.$ext';
   }
 
-  static Future<bool> _requestStoragePermission() async {
-    if (!Platform.isAndroid) return true;
-
-    // Check if already granted
-    if (await Permission.manageExternalStorage.isGranted) return true;
-    if (await Permission.storage.isGranted) return true;
-
-    // Request manage external storage (for Android 11+)
-    final manageResult = await Permission.manageExternalStorage.request();
-    if (manageResult.isGranted) return true;
-
-    // Request regular storage (for Android 9 and below)
-    final storageResult = await Permission.storage.request();
-    if (storageResult.isGranted) return true;
-
-    return false;
-  }
+  /// Urut dari tanggal terlama agar mudah dibaca sebagai buku kas.
+  static List<TransactionModel> _chronological(List<TransactionModel> txs) =>
+      [...txs]..sort((a, b) => a.date.compareTo(b.date));
 
   // ============== EXCEL EXPORT ==============
-  static Future<void> exportToExcel(
+  /// Mengembalikan `false` bila pengguna membatalkan dialog simpan.
+  static Future<bool> exportToExcel(
     List<TransactionModel> transactions,
     String schoolName,
+    YearSummary summary,
   ) async {
     final excel = Excel.createExcel();
     final sheet = excel['Laporan Keuangan'];
-
     if (excel.sheets.containsKey('Sheet1')) {
       excel.delete('Sheet1');
     }
 
-    // Title Row
-    sheet.cell(CellIndex.indexByString("A1")).value = TextCellValue(
-      'Laporan Keuangan - $schoolName',
-    );
+    var row = 0;
+    void put(int col, CellValue value) {
+      sheet
+              .cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row))
+              .value =
+          value;
+    }
 
-    // Header Row
-    final headers = [
+    put(0, TextCellValue('Laporan Keuangan - $schoolName'));
+    row++;
+    put(0, TextCellValue('Tahun Anggaran ${summary.year}'));
+    row += 2;
+
+    const headers = [
       'Tanggal',
       'Jenis',
       'Kategori',
+      'Sumber Dana',
       'Keterangan',
       'Pemasukan',
       'Pengeluaran',
     ];
-    for (int i = 0; i < headers.length; i++) {
-      var cell = sheet.cell(
-        CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 2),
-      );
-      cell.value = TextCellValue(headers[i]);
+    for (var i = 0; i < headers.length; i++) {
+      put(i, TextCellValue(headers[i]));
     }
+    row++;
 
-    int rowIndex = 3;
-    final df = DateFormat('dd MMM yyyy');
-    double totalIn = 0;
-    double totalOut = 0;
+    put(4, TextCellValue('Saldo awal (sisa tahun lalu)'));
+    put(5, DoubleCellValue(summary.openingBalance));
+    row++;
 
-    for (final tx in transactions) {
-      final isIn = tx.type == 'income';
-      if (isIn) {
-        totalIn += tx.amount;
-      } else {
-        totalOut += tx.amount;
-      }
-
-      sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: rowIndex))
-          .value = TextCellValue(
-        df.format(tx.date),
-      );
-      sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIndex))
-          .value = TextCellValue(
-        isIn ? 'Masuk' : 'Keluar',
-      );
-      final mappedCategory = tx.category == 'BOS Fund'
-          ? 'Dana BOS'
-          : tx.category;
+    for (final tx in _chronological(transactions)) {
       final fullTitle =
           (tx.description != null && tx.description!.trim().isNotEmpty)
           ? '${tx.title} - ${tx.description}'
           : tx.title;
-
-      sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: rowIndex))
-          .value = TextCellValue(
-        mappedCategory,
-      );
-      sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIndex))
-          .value = TextCellValue(
-        fullTitle,
-      );
-
-      if (isIn) {
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: rowIndex),
-            )
-            .value = DoubleCellValue(
-          tx.amount,
-        );
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: rowIndex),
-            )
-            .value = TextCellValue(
-          '-',
-        );
-      } else {
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: rowIndex),
-            )
-            .value = TextCellValue(
-          '-',
-        );
-        sheet
-            .cell(
-              CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: rowIndex),
-            )
-            .value = DoubleCellValue(
-          tx.amount,
-        );
-      }
-      rowIndex++;
+      put(0, TextCellValue(_dateFormat.format(tx.date)));
+      put(1, TextCellValue(tx.isIncome ? 'Masuk' : 'Keluar'));
+      put(2, TextCellValue(_categoryLabel(tx)));
+      put(3, TextCellValue(FundSource.label(tx.fundSource)));
+      put(4, TextCellValue(fullTitle));
+      put(5, tx.isIncome ? DoubleCellValue(tx.amount) : TextCellValue('-'));
+      put(6, tx.isIncome ? TextCellValue('-') : DoubleCellValue(tx.amount));
+      row++;
     }
 
-    // Total Row
-    rowIndex++;
-    sheet
-        .cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIndex))
-        .value = TextCellValue(
-      'TOTAL',
-    );
-    sheet
-        .cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: rowIndex))
-        .value = DoubleCellValue(
-      totalIn,
-    );
-    sheet
-        .cell(CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: rowIndex))
-        .value = DoubleCellValue(
-      totalOut,
-    );
-
-    // Saldo
-    rowIndex++;
-    sheet
-        .cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIndex))
-        .value = TextCellValue(
-      'SALDO AKHIR',
-    );
-    sheet
-        .cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: rowIndex))
-        .value = DoubleCellValue(
-      totalIn - totalOut,
-    );
+    row++;
+    put(4, TextCellValue('TOTAL TAHUN ${summary.year}'));
+    put(5, DoubleCellValue(summary.income));
+    put(6, DoubleCellValue(summary.expense));
+    row++;
+    for (final (label, value) in [
+      ('SALDO AKHIR', summary.closingBalance),
+      ('  - Dana BOS', summary.bosBalance),
+      ('  - Dana Lainnya', summary.otherBalance),
+    ]) {
+      put(4, TextCellValue(label));
+      put(5, DoubleCellValue(value));
+      row++;
+    }
 
     final fileBytes = excel.save();
-    if (fileBytes != null) {
-      if (kIsWeb) {
-        // Fallback for Web if needed
-      } else {
-        final dir = await _getSaveDirectory();
-
-        final filePath =
-            '${dir.path}/Laporan_Keuangan_Excel_${DateTime.now().millisecondsSinceEpoch}.xlsx';
-        final file = File(filePath);
-        await file.writeAsBytes(fileBytes);
-
-        // Buka otomatis
-        await OpenFilex.open(filePath);
-      }
-    }
+    if (fileBytes == null) return false;
+    return FileExport.save(
+      Uint8List.fromList(fileBytes),
+      _fileName('Excel', summary.year, 'xlsx'),
+      openAfterSave: true,
+    );
   }
 
   // ============== PDF EXPORT ==============
-  static Future<void> exportToPdf(
+  /// Mengembalikan `false` bila pengguna membatalkan dialog simpan.
+  static Future<bool> exportToPdf(
     List<TransactionModel> transactions,
     String schoolName,
+    YearSummary summary,
   ) async {
     final pdf = pw.Document();
 
-    double totalIn = 0;
-    double totalOut = 0;
-    for (var tx in transactions) {
-      if (tx.type == 'income') {
-        totalIn += tx.amount;
-      } else {
-        totalOut += tx.amount;
-      }
-    }
-
-    final df = DateFormat('dd MMM yyyy');
+    pw.Widget totalLine(String label, double value, {PdfColor? color}) =>
+        pw.Padding(
+          padding: const pw.EdgeInsets.only(bottom: 4),
+          child: pw.Text(
+            '$label: ${_formatCurrency(value)}',
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: color),
+          ),
+        );
 
     pdf.addPage(
       pw.MultiPage(
@@ -283,12 +151,23 @@ class ExportService {
                     'Sekolah: $schoolName',
                     style: const pw.TextStyle(fontSize: 14),
                   ),
+                  pw.Text(
+                    'Tahun Anggaran: ${summary.year}',
+                    style: const pw.TextStyle(fontSize: 14),
+                  ),
                   pw.SizedBox(height: 16),
                 ],
               ),
             ),
             pw.TableHelper.fromTextArray(
-              headers: ['Tanggal', 'Transaksi', 'Kategori', 'Masuk', 'Keluar'],
+              headers: [
+                'Tanggal',
+                'Transaksi',
+                'Kategori',
+                'Sumber',
+                'Masuk',
+                'Keluar',
+              ],
               headerStyle: pw.TextStyle(
                 fontWeight: pw.FontWeight.bold,
                 color: PdfColors.white,
@@ -298,22 +177,27 @@ class ExportService {
               ),
               cellAlignment: pw.Alignment.centerLeft,
               data: [
-                ...transactions.map((t) {
-                  final mappedCat = t.category == 'BOS Fund'
-                      ? 'Dana BOS'
-                      : t.category;
+                [
+                  '',
+                  'Saldo awal (sisa tahun lalu)',
+                  '',
+                  '',
+                  _formatCurrency(summary.openingBalance),
+                  '-',
+                ],
+                ..._chronological(transactions).map((t) {
                   final fullTitle =
                       (t.description != null &&
                           t.description!.trim().isNotEmpty)
                       ? '${t.title}\nCatatan: ${t.description}'
                       : t.title;
-
                   return [
-                    df.format(t.date),
+                    _dateFormat.format(t.date),
                     fullTitle,
-                    mappedCat,
-                    t.type == 'income' ? _formatCurrency(t.amount) : '-',
-                    t.type == 'expense' ? _formatCurrency(t.amount) : '-',
+                    _categoryLabel(t),
+                    t.fundSource == FundSource.bos ? 'BOS' : 'Lainnya',
+                    t.isIncome ? _formatCurrency(t.amount) : '-',
+                    t.isIncome ? '-' : _formatCurrency(t.amount),
                   ];
                 }),
               ],
@@ -326,28 +210,29 @@ class ExportService {
                 pw.Column(
                   crossAxisAlignment: pw.CrossAxisAlignment.end,
                   children: [
-                    pw.Text(
-                      'Total Pemasukan: ${_formatCurrency(totalIn)}',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        color: PdfColors.green700,
-                      ),
+                    totalLine('Saldo Awal', summary.openingBalance),
+                    totalLine(
+                      'Total Pemasukan',
+                      summary.income,
+                      color: PdfColors.green700,
+                    ),
+                    totalLine(
+                      'Total Pengeluaran',
+                      summary.expense,
+                      color: PdfColors.red700,
                     ),
                     pw.SizedBox(height: 4),
                     pw.Text(
-                      'Total Pengeluaran: ${_formatCurrency(totalOut)}',
-                      style: pw.TextStyle(
-                        fontWeight: pw.FontWeight.bold,
-                        color: PdfColors.red700,
-                      ),
-                    ),
-                    pw.SizedBox(height: 8),
-                    pw.Text(
-                      'Saldo Akhir: ${_formatCurrency(totalIn - totalOut)}',
+                      'Saldo Akhir: ${_formatCurrency(summary.closingBalance)}',
                       style: pw.TextStyle(
                         fontSize: 16,
                         fontWeight: pw.FontWeight.bold,
                       ),
+                    ),
+                    pw.SizedBox(height: 4),
+                    pw.Text(
+                      'Dana BOS ${_formatCurrency(summary.bosBalance)} | '
+                      'Dana Lainnya ${_formatCurrency(summary.otherBalance)}',
                     ),
                   ],
                 ),
@@ -358,20 +243,10 @@ class ExportService {
       ),
     );
 
-    final bytes = await pdf.save();
-
-    if (kIsWeb) {
-      // Fallback for web if needed
-    } else {
-      final dir = await _getSaveDirectory();
-
-      final filePath =
-          '${dir.path}/Laporan_Keuangan_PDF_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      final file = File(filePath);
-      await file.writeAsBytes(bytes);
-
-      // Buka otomatis
-      await OpenFilex.open(filePath);
-    }
+    return FileExport.save(
+      await pdf.save(),
+      _fileName('PDF', summary.year, 'pdf'),
+      openAfterSave: true,
+    );
   }
 }

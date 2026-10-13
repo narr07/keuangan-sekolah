@@ -4,6 +4,7 @@ import '../database/database_helper.dart';
 import '../theme/app_colors.dart';
 import '../main_shell.dart';
 import '../models/settings_model.dart';
+import '../services/backup_service.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -15,7 +16,9 @@ class OnboardingScreen extends StatefulWidget {
 class _OnboardingScreenState extends State<OnboardingScreen> {
   final _formKey = GlobalKey<FormState>();
   final _schoolNameController = TextEditingController();
-  final _tahunAnggaranController = TextEditingController();
+  final _tahunAnggaranController = TextEditingController(
+    text: DateTime.now().year.toString(),
+  );
 
   bool _isLoading = false;
 
@@ -44,11 +47,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     // Save to database
     await dbHelper.updateSettings(settings);
 
-    // Mark onboarding as completed
+    await _finishOnboarding();
+  }
+
+  Future<void> _finishOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_first_time', false);
-
-    setState(() => _isLoading = false);
 
     if (mounted) {
       Navigator.pushReplacement(
@@ -56,6 +60,28 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         MaterialPageRoute(builder: (context) => const MainShell()),
       );
     }
+  }
+
+  Future<void> _restore() async {
+    setState(() => _isLoading = true);
+    try {
+      if (await BackupService.importBackup()) {
+        await _finishOnboarding();
+        return;
+      }
+    } on FormatException catch (e) {
+      _showError(e.message);
+    } catch (e) {
+      _showError('Gagal memulihkan data: $e');
+    }
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
   }
 
   @override
@@ -148,7 +174,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   controller: _tahunAnggaranController,
                   keyboardType: TextInputType.number,
                   decoration: InputDecoration(
-                    hintText: 'Contoh: 2024',
+                    hintText: 'Contoh: ${DateTime.now().year}',
                     prefixIcon: const Icon(
                       Icons.calendar_today,
                       color: AppColors.primary,
@@ -172,9 +198,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       ),
                     ),
                   ),
-                  validator: (v) => v == null || v.trim().isEmpty
-                      ? 'Tahun anggaran wajib diisi'
-                      : null,
+                  validator: (v) => RegExp(r'^\d{4}$').hasMatch(v?.trim() ?? '')
+                      ? null
+                      : 'Isi tahun 4 digit, misalnya ${DateTime.now().year}',
                 ),
 
                 const SizedBox(height: 48),
@@ -209,6 +235,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             ),
                           ),
                   ),
+                ),
+                const SizedBox(height: 12),
+                TextButton.icon(
+                  onPressed: _isLoading ? null : _restore,
+                  icon: const Icon(Icons.restore),
+                  label: const Text('Sudah punya backup? Pulihkan data'),
                 ),
               ],
             ),

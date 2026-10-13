@@ -19,6 +19,7 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
   final _currencyFormat = NumberFormat('#,##0', 'id_ID');
 
   double _totalExpense = 0;
+  int _year = DateTime.now().year;
   List<TransactionModel> _expenses = [];
   bool _isLoading = true;
   String _selectedFilter = 'Semua';
@@ -41,10 +42,18 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    _totalExpense = await _dbHelper.getTotalExpense();
-    final allTx = await _dbHelper.getAllTransactions();
-    _expenses = allTx.where((t) => t.type == 'expense').toList();
-    setState(() => _isLoading = false);
+    final year = (await _dbHelper.getSettings()).activeYear;
+    final expenses = await _dbHelper.getTransactions(
+      year: year,
+      type: TxType.expense,
+    );
+    if (!mounted) return;
+    setState(() {
+      _year = year;
+      _expenses = expenses;
+      _totalExpense = expenses.fold(0, (sum, t) => sum + t.amount);
+      _isLoading = false;
+    });
   }
 
   List<TransactionModel> get _filteredExpenses {
@@ -258,6 +267,12 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
     );
   }
 
+  /// Tanggal awal form: hari ini, atau akhir tahun bila melihat tahun lampau.
+  DateTime _defaultDate() {
+    final now = DateTime.now();
+    return _year >= now.year ? now : DateTime(_year, 12, 31);
+  }
+
   Future<void> _showInputForm(
     String category,
     TransactionModel? existing,
@@ -269,7 +284,8 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
     final descController = TextEditingController(
       text: existing?.description ?? '',
     );
-    DateTime selectedDate = existing?.date ?? DateTime.now();
+    DateTime selectedDate = existing?.date ?? _defaultDate();
+    String selectedSource = existing?.fundSource ?? FundSource.bos;
     final isEdit = existing != null;
 
     final result = await showModalBottomSheet<bool>(
@@ -363,6 +379,32 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
                           ),
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Fund source
+                    const Text(
+                      'Sumber Dana',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        for (final source in FundSource.all)
+                          ChoiceChip(
+                            label: Text(FundSource.label(source)),
+                            selected: selectedSource == source,
+                            selectedColor: AppColors.primary.withValues(
+                              alpha: 0.15,
+                            ),
+                            onSelected: (_) =>
+                                setModalState(() => selectedSource = source),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 16),
 
@@ -553,30 +595,22 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
                             return;
                           }
 
+                          final transaction = TransactionModel(
+                            id: existing?.id,
+                            title: titleController.text.trim(),
+                            category: category,
+                            amount: amount,
+                            type: TxType.expense,
+                            date: selectedDate,
+                            description: descController.text.trim().isEmpty
+                                ? null
+                                : descController.text.trim(),
+                            icon: _getIconName(category),
+                            fundSource: selectedSource,
+                          );
                           if (isEdit) {
-                            final updated = existing.copyWith(
-                              title: titleController.text.trim(),
-                              category: category,
-                              amount: amount,
-                              date: selectedDate,
-                              description: descController.text.trim().isEmpty
-                                  ? null
-                                  : descController.text.trim(),
-                              icon: _getIconName(category),
-                            );
-                            await _dbHelper.updateTransaction(updated);
+                            await _dbHelper.updateTransaction(transaction);
                           } else {
-                            final transaction = TransactionModel(
-                              title: titleController.text.trim(),
-                              category: category,
-                              amount: amount,
-                              type: 'expense',
-                              date: selectedDate,
-                              description: descController.text.trim().isEmpty
-                                  ? null
-                                  : descController.text.trim(),
-                              icon: _getIconName(category),
-                            );
                             await _dbHelper.insertTransaction(transaction);
                           }
                           if (ctx.mounted) Navigator.pop(ctx, true);
@@ -704,7 +738,7 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'TOTAL PENGELUARAN BULAN INI',
+              'TOTAL PENGELUARAN TAHUN $_year',
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.8),
                 fontSize: 12,
@@ -739,7 +773,7 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
                   ),
                   const SizedBox(width: 6),
                   Text(
-                    DateFormat('MMMM yyyy').format(DateTime.now()),
+                    'Tahun Anggaran $_year',
                     style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),
                 ],
@@ -758,7 +792,7 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         scrollDirection: Axis.horizontal,
         itemCount: _filters.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           final filter = _filters[index];
           final isSelected = _selectedFilter == filter;
@@ -868,7 +902,7 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
                             builder: (ctx) => AlertDialog(
                               title: const Text('Hapus Pengeluaran'),
                               content: const Text(
-                                'Yakin ingin menghapus pengeluaran ini? Saldo akan dikembalikan.',
+                                'Yakin ingin menghapus pengeluaran ini?',
                               ),
                               actions: [
                                 TextButton(
@@ -886,20 +920,6 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
                             ),
                           );
                           if (confirm == true && tx.id != null) {
-                            // Recover balance when deleting expense
-                            final amount = tx.amount;
-                            final isBos = tx.category == 'BOS Fund';
-                            final fundName = isBos ? 'BOS Fund' : 'Other Fund';
-                            final funds = await _dbHelper.getAllFunds();
-                            for (final fund in funds) {
-                              if (fund.name == fundName) {
-                                await _dbHelper.updateFundBalance(
-                                  fund.name,
-                                  fund.balance + amount,
-                                );
-                                break;
-                              }
-                            }
                             await _dbHelper.deleteTransaction(tx.id!);
                             _loadData();
                           }
@@ -954,7 +974,7 @@ class PengeluaranScreenState extends State<PengeluaranScreen> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                '${dateFormat.format(tx.date)} • ${tx.category}',
+                                '${dateFormat.format(tx.date)} • ${tx.category} • ${FundSource.label(tx.fundSource)}',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: Colors.black45,

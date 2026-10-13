@@ -5,12 +5,12 @@
 import FlutterMacOS
 import Foundation
 
-import file_saver
+import file_picker
 import shared_preferences_foundation
 import sqflite_darwin
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
-  FileSaverPlugin.register(with: registry.registrar(forPlugin: "FileSaverPlugin"))
+  FilePickerPlugin.register(with: registry.registrar(forPlugin: "FilePickerPlugin"))
   SharedPreferencesPlugin.register(with: registry.registrar(forPlugin: "SharedPreferencesPlugin"))
   SqflitePlugin.register(with: registry.registrar(forPlugin: "SqflitePlugin"))
 }
