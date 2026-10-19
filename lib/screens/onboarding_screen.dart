@@ -39,8 +39,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     // Default settings with the provided info
     final settings = SettingsModel(
       schoolName: _schoolNameController.text.trim(),
-      paguSemester1: 0,
-      paguSemester2: 0,
       tahunAnggaran: _tahunAnggaranController.text.trim(),
     );
 

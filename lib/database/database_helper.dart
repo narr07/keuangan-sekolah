@@ -4,11 +4,12 @@ import 'package:path/path.dart';
 import '../models/transaction_model.dart';
 import '../models/settings_model.dart';
 import '../models/bos_disbursement_model.dart';
+import '../models/bos_pagu_model.dart';
 import '../models/year_summary.dart';
 
 class DatabaseHelper {
   static const _dbName = 'keuangan_sekolah.db';
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
 
   /// Penanda format file backup (lihat [exportData] / [importData]).
   static const backupAppId = 'budgetku_edu';
@@ -41,11 +42,11 @@ class DatabaseHelper {
 
   static Map<String, Object?> _defaultSettings() => {
     'school_name': 'Nama Sekolah',
-    'pagu_semester1': 0,
-    'pagu_semester2': 0,
     'tahun_anggaran': DateTime.now().year.toString(),
   };
 
+  // Kolom pagu_semester1/2 tidak dipakai lagi sejak skema 4 (pindah ke
+  // tabel bos_pagu per tahun), tapi dibiarkan agar migrasi lama tetap jalan.
   static const _createSettingsSql = '''
     CREATE TABLE IF NOT EXISTS settings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,6 +66,14 @@ class DatabaseHelper {
       status TEXT NOT NULL DEFAULT 'Cair',
       description TEXT,
       semester INTEGER NOT NULL DEFAULT 1
+    )
+  ''';
+
+  static const _createBosPaguSql = '''
+    CREATE TABLE IF NOT EXISTS bos_pagu (
+      year INTEGER PRIMARY KEY,
+      semester1 REAL NOT NULL DEFAULT 0,
+      semester2 REAL NOT NULL DEFAULT 0
     )
   ''';
 
@@ -91,6 +100,7 @@ class DatabaseHelper {
     ''');
     await db.execute(_createSettingsSql);
     await db.execute(_createDisbursementsSql);
+    await db.execute(_createBosPaguSql);
     for (final sql in _createIndexesSql) {
       await db.execute(sql);
     }
@@ -153,6 +163,32 @@ class DatabaseHelper {
         await db.execute(sql);
       }
     }
+
+    if (oldVersion < 4) {
+      // Pagu dulu hanya satu untuk semua tahun; pindahkan ke tahun aktif.
+      await db.execute(_createBosPaguSql);
+      final rows = await db.query('settings', limit: 1);
+      if (rows.isNotEmpty) {
+        await _insertLegacyPagu(db, rows.first);
+      }
+    }
+  }
+
+  /// Menyimpan pagu dari baris `settings` versi lama sebagai pagu tahun
+  /// anggarannya. Tidak melakukan apa-apa bila pagunya kosong.
+  static Future<void> _insertLegacyPagu(
+    DatabaseExecutor db,
+    Map<String, Object?> settings,
+  ) async {
+    final s1 = (settings['pagu_semester1'] as num?)?.toDouble() ?? 0;
+    final s2 = (settings['pagu_semester2'] as num?)?.toDouble() ?? 0;
+    final year = int.tryParse('${settings['tahun_anggaran']}');
+    if (year == null || (s1 == 0 && s2 == 0)) return;
+    await db.insert(
+      'bos_pagu',
+      BosPaguModel(year: year, semester1: s1, semester2: s2).toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   /// Batas tanggal (ISO-8601) untuk satu tahun: [awal, akhir).
@@ -210,6 +246,30 @@ class DatabaseHelper {
       DateTime.now().year,
     };
     return years.toList()..sort((a, b) => b.compareTo(a));
+  }
+
+  // ==================== BOS PAGU ====================
+
+  /// Pagu BOS untuk [year]; bernilai 0 bila belum diisi.
+  Future<BosPaguModel> getPagu(int year) async {
+    final db = await database;
+    final rows = await db.query(
+      'bos_pagu',
+      where: 'year = ?',
+      whereArgs: [year],
+    );
+    return rows.isEmpty
+        ? BosPaguModel(year: year)
+        : BosPaguModel.fromMap(rows.first);
+  }
+
+  Future<void> setPagu(BosPaguModel pagu) async {
+    final db = await database;
+    await db.insert(
+      'bos_pagu',
+      pagu.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   // ==================== BOS DISBURSEMENTS ====================
@@ -292,9 +352,7 @@ class DatabaseHelper {
     });
   }
 
-  Future<List<BosDisbursementModel>> getBosDisbursementsByYear(
-    int year,
-  ) async {
+  Future<List<BosDisbursementModel>> getBosDisbursementsByYear(int year) async {
     final db = await database;
     final result = await db.query(
       'bos_disbursements',
@@ -384,6 +442,19 @@ class DatabaseHelper {
     return result.map(TransactionModel.fromMap).toList();
   }
 
+  /// Saldo seluruh transaksi bersumber [fundSource] sampai saat ini.
+  /// [excludeId] dipakai saat mengedit agar nilai lamanya tidak ikut dihitung.
+  Future<double> getFundBalance(String fundSource, {int? excludeId}) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      "SELECT SUM(CASE type WHEN 'income' THEN amount ELSE -amount END) "
+      'AS balance FROM transactions WHERE fund_source = ?'
+      "${excludeId != null ? ' AND id != ?' : ''}",
+      [fundSource, ?excludeId],
+    );
+    return (result.first['balance'] as num?)?.toDouble() ?? 0;
+  }
+
   Future<YearSummary> getYearSummary(int year) async {
     final db = await database;
     final range = _yearRange(year);
@@ -427,6 +498,10 @@ class DatabaseHelper {
       'schema': schemaVersion,
       'exported_at': DateTime.now().toIso8601String(),
       'settings': (await getSettings()).toMap()..remove('id'),
+      'bos_pagu': [
+        for (final r in await db.query('bos_pagu', orderBy: 'year'))
+          Map<String, Object?>.of(r),
+      ],
       'bos_disbursements': [
         for (final r in await db.query('bos_disbursements', orderBy: 'id'))
           Map<String, Object?>.of(r),
@@ -454,12 +529,18 @@ class DatabaseHelper {
     }
 
     final SettingsModel settings;
+    final List<BosPaguModel> pagu;
     final List<BosDisbursementModel> disbursements;
     final List<TransactionModel> transactions;
     try {
       settings = SettingsModel.fromMap(
         Map<String, dynamic>.from(data['settings'] as Map),
       );
+      // Backup sebelum skema 4 tidak punya `bos_pagu`; pagunya ada di settings.
+      pagu = [
+        for (final m in (data['bos_pagu'] as List?) ?? const [])
+          BosPaguModel.fromMap(Map<String, dynamic>.from(m as Map)),
+      ];
       disbursements = [
         for (final m in data['bos_disbursements'] as List)
           BosDisbursementModel.fromMap(Map<String, dynamic>.from(m as Map)),
@@ -477,7 +558,17 @@ class DatabaseHelper {
       await txn.delete('transactions');
       await txn.delete('bos_disbursements');
       await txn.delete('settings');
+      await txn.delete('bos_pagu');
       await txn.insert('settings', settings.toMap()..remove('id'));
+      if (data['bos_pagu'] == null) {
+        await _insertLegacyPagu(
+          txn,
+          Map<String, Object?>.from(data['settings'] as Map),
+        );
+      }
+      for (final p in pagu) {
+        await txn.insert('bos_pagu', p.toMap());
+      }
       for (final d in disbursements) {
         await txn.insert('bos_disbursements', d.toMap());
       }

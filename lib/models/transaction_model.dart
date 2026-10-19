@@ -47,6 +47,9 @@ class TransactionModel {
 
   bool get isIncome => type == TxType.income;
 
+  /// Nama kategori untuk ditampilkan ke pengguna.
+  String get categoryLabel => category == kBosCategory ? 'Dana BOS' : category;
+
   /// Transaksi hasil pencairan BOS hanya boleh diubah dari halaman BOS.
   bool get isLinkedToDisbursement => disbursementId != null;
 

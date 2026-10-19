@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'theme/app_colors.dart';
 import 'database/database_helper.dart';
 import 'models/transaction_model.dart';
+import 'models/tx_category.dart';
 import 'models/settings_model.dart';
 import 'models/year_summary.dart';
 import 'screens/settings_screen.dart';
@@ -91,29 +92,6 @@ class HomeScreenState extends State<HomeScreen> {
 
   String _formatCurrency(double amount) {
     return 'Rp ${_currencyFormat.format(amount.toInt())}';
-  }
-
-  IconData _getIconData(String iconName) {
-    switch (iconName) {
-      case 'account_balance':
-        return Icons.account_balance;
-      case 'savings':
-        return Icons.savings;
-      case 'description':
-        return Icons.description;
-      case 'favorite':
-        return Icons.favorite;
-      case 'settings':
-        return Icons.settings;
-      case 'directions_car':
-        return Icons.directions_car;
-      case 'build':
-        return Icons.build;
-      case 'payments':
-        return Icons.payments;
-      default:
-        return Icons.receipt;
-    }
   }
 
   @override
@@ -603,7 +581,7 @@ class HomeScreenState extends State<HomeScreen> {
           )
         else
           ..._transactions.map((t) {
-            final isIncome = t.type == 'income';
+            final isIncome = t.isIncome;
             final dateFormat = DateFormat('dd MMM yyyy');
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
@@ -624,7 +602,7 @@ class HomeScreenState extends State<HomeScreen> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Icon(
-                        _getIconData(t.icon),
+                        TxCategory.iconFromName(t.icon),
                         color: isIncome
                             ? AppColors.emerald600
                             : AppColors.red500,
@@ -646,7 +624,7 @@ class HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            '${dateFormat.format(t.date)} • ${t.category == "BOS Fund" ? "Dana BOS" : t.category}',
+                            '${dateFormat.format(t.date)} • ${t.categoryLabel}',
                             style: const TextStyle(
                               fontSize: 10,
                               color: Colors.black54,

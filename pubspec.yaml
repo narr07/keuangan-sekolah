@@ -1,7 +1,7 @@
 name: budgetku_edu
 description: "Aplikasi Manajemen Keuangan BudgetKu Edu"
 publish_to: 'none'
-version: 1.1.0+4
+version: 1.2.0+5
 
 environment:
   sdk: ^3.10.4
@@ -12,9 +12,12 @@ dependencies:
   fl_chart: ^1.1.1
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   flutter_slidable: ^4.0.3
   intl: ^0.20.2
   open_filex: ^4.7.0
+  package_info_plus: ^9.0.1
   path: ^1.9.1
   path_provider: ^2.1.5
   pdf: ^3.11.3
@@ -30,3 +33,15 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/fonts/OFL.txt
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700

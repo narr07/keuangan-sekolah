@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'theme/app_colors.dart';
 import 'home_screen.dart';
+import 'models/transaction_model.dart';
 import 'screens/bos_screen.dart';
-import 'screens/pengeluaran_screen.dart';
-import 'screens/pemasukan_screen.dart';
+import 'screens/transaction_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -18,8 +18,8 @@ class _MainShellState extends State<MainShell> {
   // Use GlobalKeys so we can trigger reload on each screen
   final _homeKey = GlobalKey<HomeScreenState>();
   final _bosKey = GlobalKey<BosScreenState>();
-  final _pengeluaranKey = GlobalKey<PengeluaranScreenState>();
-  final _pemasukanKey = GlobalKey<PemasukanScreenState>();
+  final _pengeluaranKey = GlobalKey<TransactionScreenState>();
+  final _pemasukanKey = GlobalKey<TransactionScreenState>();
 
   late final List<Widget> _pages;
 
@@ -29,8 +29,8 @@ class _MainShellState extends State<MainShell> {
     _pages = [
       HomeScreen(key: _homeKey),
       BosScreen(key: _bosKey),
-      PengeluaranScreen(key: _pengeluaranKey),
-      PemasukanScreen(key: _pemasukanKey),
+      TransactionScreen(key: _pengeluaranKey, type: TxType.expense),
+      TransactionScreen(key: _pemasukanKey, type: TxType.income),
     ];
   }
 

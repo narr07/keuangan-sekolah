@@ -1,5 +1,6 @@
 import 'package:budgetku_edu/database/database_helper.dart';
 import 'package:budgetku_edu/models/bos_disbursement_model.dart';
+import 'package:budgetku_edu/models/bos_pagu_model.dart';
 import 'package:budgetku_edu/models/transaction_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -71,15 +72,18 @@ void main() {
       expect(tx.title, 'Dana BOS Tahap 1 Revisi');
     });
 
-    test('hapus satu dari dua pencairan identik hanya menghapus miliknya', () async {
-      final id1 = await db.insertBosDisbursement(disbursement());
-      final id2 = await db.insertBosDisbursement(disbursement());
-      await db.deleteBosDisbursement(id1);
+    test(
+      'hapus satu dari dua pencairan identik hanya menghapus miliknya',
+      () async {
+        final id1 = await db.insertBosDisbursement(disbursement());
+        final id2 = await db.insertBosDisbursement(disbursement());
+        await db.deleteBosDisbursement(id1);
 
-      final txs = await db.getTransactions(year: 2026);
-      expect(txs, hasLength(1));
-      expect(txs.single.disbursementId, id2);
-    });
+        final txs = await db.getTransactions(year: 2026);
+        expect(txs, hasLength(1));
+        expect(txs.single.disbursementId, id2);
+      },
+    );
 
     test('pemasukan tertaut tidak bisa diubah/dihapus langsung', () async {
       await db.insertBosDisbursement(disbursement());
@@ -102,6 +106,38 @@ void main() {
       expect(await db.getTotalBosCair(2026), 100);
       expect(await db.getTotalBosCair(2026, semester: 2), 0);
       expect(await db.getTotalBosCair(2025), 30);
+    });
+  });
+
+  group('pagu BOS', () {
+    test('pagu tersimpan terpisah untuk tiap tahun', () async {
+      await db.setPagu(
+        const BosPaguModel(year: 2025, semester1: 100, semester2: 200),
+      );
+      await db.setPagu(
+        const BosPaguModel(year: 2026, semester1: 300, semester2: 400),
+      );
+
+      expect((await db.getPagu(2025)).total, 300);
+      expect((await db.getPagu(2026)).total, 700);
+      expect((await db.getPagu(2027)).total, 0);
+
+      await db.setPagu(const BosPaguModel(year: 2026, semester1: 1));
+      expect((await db.getPagu(2026)).semester1, 1);
+      expect((await db.getPagu(2025)).semester1, 100);
+    });
+  });
+
+  group('saldo sumber dana', () {
+    test('dihitung per sumber dana, bisa mengecualikan transaksi', () async {
+      await db.insertBosDisbursement(disbursement(amount: 100));
+      final id = await db.insertTransaction(expense(30));
+      await db.insertTransaction(expense(5, source: FundSource.lainnya));
+
+      expect(await db.getFundBalance(FundSource.bos), 70);
+      expect(await db.getFundBalance(FundSource.lainnya), -5);
+      // Saat mengedit pengeluaran 30, saldo sebelum pengeluaran itu = 100.
+      expect(await db.getFundBalance(FundSource.bos, excludeId: id), 100);
     });
   });
 
@@ -146,6 +182,7 @@ void main() {
 
   group('backup', () {
     test('ekspor lalu impor mengembalikan data beserta tautannya', () async {
+      await db.setPagu(const BosPaguModel(year: 2026, semester1: 5));
       await db.insertBosDisbursement(disbursement());
       await db.insertTransaction(expense(10));
       final backup = await db.exportData();
@@ -155,9 +192,28 @@ void main() {
 
       final txs = await db.getTransactions(year: 2026);
       expect(txs, hasLength(2));
+      expect((await db.getPagu(2026)).semester1, 5);
       final linked = txs.firstWhere((t) => t.isLinkedToDisbursement);
       await db.deleteBosDisbursement(linked.disbursementId!);
       expect(await db.getTransactions(year: 2026), hasLength(1));
+    });
+
+    test('backup versi lama memindahkan pagu ke tahun anggarannya', () async {
+      final backup = await db.exportData()
+        ..remove('bos_pagu')
+        ..['schema'] = 3
+        ..['settings'] = {
+          'school_name': 'SDN 1',
+          'pagu_semester1': 10,
+          'pagu_semester2': 20,
+          'tahun_anggaran': '2025',
+        };
+      await db.importData(backup);
+
+      final pagu = await db.getPagu(2025);
+      expect(pagu.semester1, 10);
+      expect(pagu.semester2, 20);
+      expect((await db.getSettings()).activeYear, 2025);
     });
 
     test('file asing ditolak tanpa mengubah data', () async {

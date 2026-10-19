@@ -5,15 +5,28 @@ tersimpan lokal di perangkat (SQLite).
 
 ## Fitur
 
-- **Dana BOS**: pagu per semester dan riwayat pencairan. Pencairan berstatus
+- **Dana BOS**: pagu per semester (disimpan terpisah untuk tiap tahun
+  anggaran) dan riwayat pencairan. Pencairan berstatus
   *Cair* otomatis tercatat sebagai pemasukan (tertaut lewat `disbursement_id`).
 - **Pemasukan & Pengeluaran** dengan kategori dan **sumber dana** (Dana BOS /
-  Dana Lainnya).
+  Dana Lainnya). Pengeluaran yang melebihi saldo sumber dananya meminta
+  konfirmasi.
 - **Tahun anggaran**: semua halaman menampilkan data tahun aktif; ganti tahun
   dari Beranda. Sisa saldo tahun lalu terbawa sebagai saldo awal.
 - **Laporan** grafik serta ekspor PDF/Excel per tahun anggaran.
 - **Backup & pulihkan** seluruh data ke file JSON (Pengaturan, atau saat
   onboarding di HP baru).
+
+## Versi web
+
+Demo web (data tersimpan di browser masing-masing):
+https://narr07.github.io/keuangan-sekolah/
+
+```bash
+flutter build web --release --base-href /keuangan-sekolah/
+```
+
+Hasil `build/web` dipublikasikan ke branch `gh-pages`.
 
 ## Pengembangan
 

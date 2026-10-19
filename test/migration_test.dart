@@ -75,7 +75,7 @@ void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
-  test('migrasi v2 -> v3 menautkan pencairan satu-satu', () async {
+  test('migrasi v2 -> terbaru menautkan pencairan satu-satu', () async {
     final dir = await Directory.systemTemp.createTemp('budgetku_test');
     final path = p.join(dir.path, 'v2.db');
     await _createV2(path);
@@ -97,6 +97,12 @@ void main() {
 
     await helper.deleteBosDisbursement(1);
     expect(await helper.getTransactions(year: 2026), hasLength(2));
+
+    // Pagu lama (satu untuk semua tahun) pindah ke tahun anggaran aktif.
+    final pagu = await helper.getPagu(2026);
+    expect(pagu.semester1, 1);
+    expect(pagu.semester2, 1);
+    expect((await helper.getPagu(2025)).total, 0);
 
     final db = await helper.database;
     final tables = await db.query(

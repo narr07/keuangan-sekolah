@@ -15,9 +15,6 @@ class ExportService {
     return 'Rp ${_currencyFormat.format(amount.toInt())}';
   }
 
-  static String _categoryLabel(TransactionModel tx) =>
-      tx.category == kBosCategory ? 'Dana BOS' : tx.category;
-
   static String _fileName(String kind, int year, String ext) {
     final stamp = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
     return 'Laporan_Keuangan_${year}_${kind}_$stamp.$ext';
@@ -78,7 +75,7 @@ class ExportService {
           : tx.title;
       put(0, TextCellValue(_dateFormat.format(tx.date)));
       put(1, TextCellValue(tx.isIncome ? 'Masuk' : 'Keluar'));
-      put(2, TextCellValue(_categoryLabel(tx)));
+      put(2, TextCellValue(tx.categoryLabel));
       put(3, TextCellValue(FundSource.label(tx.fundSource)));
       put(4, TextCellValue(fullTitle));
       put(5, tx.isIncome ? DoubleCellValue(tx.amount) : TextCellValue('-'));
@@ -194,7 +191,7 @@ class ExportService {
                   return [
                     _dateFormat.format(t.date),
                     fullTitle,
-                    _categoryLabel(t),
+                    t.categoryLabel,
                     t.fundSource == FundSource.bos ? 'BOS' : 'Lainnya',
                     t.isIncome ? _formatCurrency(t.amount) : '-',
                     t.isIncome ? '-' : _formatCurrency(t.amount),

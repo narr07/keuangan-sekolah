@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../theme/app_colors.dart';
 import '../database/database_helper.dart';
+import '../models/bos_pagu_model.dart';
 import '../models/settings_model.dart';
 import '../services/backup_service.dart';
 import '../services/export_service.dart';
@@ -24,11 +26,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _isLoading = true;
   bool _isSaving = false;
+  String _appVersion = '';
+
+  /// Tahun yang pagunya sedang tampil di form.
+  int? _paguYear;
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
+    _tahunAnggaranController.addListener(_onYearChanged);
+    // Agar "Total Pagu Setahun" ikut berubah saat mengetik.
+    _paguSemester1Controller.addListener(_refresh);
+    _paguSemester2Controller.addListener(_refresh);
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) setState(() => _appVersion = info.version);
+    });
   }
 
   @override
@@ -40,17 +53,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  void _refresh() => setState(() {});
+
+  int? get _enteredYear {
+    final text = _tahunAnggaranController.text.trim();
+    return RegExp(r'^\d{4}$').hasMatch(text) ? int.parse(text) : null;
+  }
+
+  /// Pagu tersimpan per tahun, jadi muat ulang saat tahun diganti.
+  Future<void> _onYearChanged() async {
+    final year = _enteredYear;
+    if (year == null || year == _paguYear) return;
+    _paguYear = year;
+    final pagu = await _dbHelper.getPagu(year);
+    if (!mounted || _paguYear != year) return;
+    _paguSemester1Controller.text = _currencyFormat.format(
+      pagu.semester1.toInt(),
+    );
+    _paguSemester2Controller.text = _currencyFormat.format(
+      pagu.semester2.toInt(),
+    );
+  }
+
   Future<void> _loadSettings() async {
     setState(() => _isLoading = true);
     final settings = await _dbHelper.getSettings();
     _schoolNameController.text = settings.schoolName;
-    _paguSemester1Controller.text = _currencyFormat.format(
-      settings.paguSemester1.toInt(),
-    );
-    _paguSemester2Controller.text = _currencyFormat.format(
-      settings.paguSemester2.toInt(),
-    );
     _tahunAnggaranController.text = settings.tahunAnggaran;
+    await _onYearChanged();
     if (mounted) setState(() => _isLoading = false);
   }
 
@@ -61,6 +91,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return double.tryParse(cleaned) ?? 0;
   }
 
+  /// Pagu boleh 0 (belum diketahui), asal berupa angka.
+  String? _validatePagu(String? v) {
+    final text = v?.trim() ?? '';
+    if (text.isEmpty) return null;
+    return RegExp(r'^[\d.,]+$').hasMatch(text) ? null : 'Jumlah tidak valid';
+  }
+
   Future<void> _saveSettings() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -68,12 +105,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     final settings = SettingsModel(
       schoolName: _schoolNameController.text.trim(),
-      paguSemester1: _parseAmount(_paguSemester1Controller.text),
-      paguSemester2: _parseAmount(_paguSemester2Controller.text),
       tahunAnggaran: _tahunAnggaranController.text.trim(),
     );
 
     await _dbHelper.updateSettings(settings);
+    await _dbHelper.setPagu(
+      BosPaguModel(
+        year: settings.activeYear,
+        semester1: _parseAmount(_paguSemester1Controller.text),
+        semester2: _parseAmount(_paguSemester2Controller.text),
+      ),
+    );
     if (!mounted) return;
 
     setState(() => _isSaving = false);
@@ -158,8 +200,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
-                              children: const [
-                                Text(
+                              children: [
+                                const Text(
                                   'BudgetKu Edu',
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold,
@@ -167,17 +209,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     color: AppColors.textDark,
                                   ),
                                 ),
-                                SizedBox(height: 4),
+                                const SizedBox(height: 4),
                                 Text(
-                                  'Aplikasi Manajemen Keuangan\nVersi 1.0.0',
-                                  style: TextStyle(
+                                  'Aplikasi Manajemen Keuangan\nVersi $_appVersion',
+                                  style: const TextStyle(
                                     fontSize: 13,
                                     color: Colors.black54,
                                     height: 1.4,
                                   ),
                                 ),
-                                SizedBox(height: 8),
-                                Text(
+                                const SizedBox(height: 8),
+                                const Text(
                                   'Dikembangkan oleh:\nDinar Permadi - permadi.dev',
                                   style: TextStyle(
                                     fontSize: 12,
@@ -222,7 +264,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                     // Pagu Anggaran Section
                     _buildSectionHeader(
-                      'Pagu Anggaran BOS',
+                      'Pagu Anggaran BOS ${_enteredYear ?? ''}',
                       Icons.account_balance_wallet,
                     ),
                     const SizedBox(height: 8),
@@ -245,7 +287,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           const SizedBox(width: 8),
                           const Expanded(
                             child: Text(
-                              'Pagu anggaran adalah batas maksimal dana BOS yang dialokasikan per semester.',
+                              'Pagu anggaran adalah batas maksimal dana BOS yang '
+                              'dialokasikan per semester. Pagu disimpan untuk '
+                              'tahun anggaran di atas; tiap tahun punya pagu '
+                              'sendiri.',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.black54,
@@ -263,13 +308,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       icon: Icons.looks_one,
                       prefix: 'Rp ',
                       keyboardType: TextInputType.number,
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return 'Pagu semester 1 wajib diisi';
-                        }
-                        if (_parseAmount(v) <= 0) return 'Jumlah tidak valid';
-                        return null;
-                      },
+                      validator: _validatePagu,
                     ),
                     const SizedBox(height: 16),
                     _buildInputField(
@@ -279,13 +318,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       icon: Icons.looks_two,
                       prefix: 'Rp ',
                       keyboardType: TextInputType.number,
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return 'Pagu semester 2 wajib diisi';
-                        }
-                        if (_parseAmount(v) <= 0) return 'Jumlah tidak valid';
-                        return null;
-                      },
+                      validator: _validatePagu,
                     ),
 
                     const SizedBox(height: 16),
